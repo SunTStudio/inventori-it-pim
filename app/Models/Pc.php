@@ -72,6 +72,28 @@ class Pc extends Model
     }
 
     /**
+     * Get effective UltraViewer password (fallback to default 'pckantor').
+     */
+    public function getUltraviewerPasswordAttribute(): string
+    {
+        return $this->ultraviewer_pass ?: 'pckantor';
+    }
+
+    /**
+     * Get nicely formatted UltraViewer ID (e.g. 13 629 618 2).
+     */
+    public function getUltraviewerFormattedIdAttribute(): string
+    {
+        $id = preg_replace('/\s+/', '', (string) $this->ultraviewer_id);
+        if ($id === '') {
+            return '-';
+        }
+
+        // Chunk into groups of 3 or 4 digits
+        return trim(chunk_split($id, 3, ' '));
+    }
+
+    /**
      * Get hardware change audit logs.
      */
     public function hardwareLogs(): HasMany

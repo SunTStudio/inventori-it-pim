@@ -21,6 +21,7 @@ class PcReportController extends Controller
             'stock_status' => 'nullable|string|in:digunakan,bebas',
             'department' => 'nullable|string|max:100',
             'location' => 'nullable|string|max:100',
+            'ultraviewer_id' => 'nullable|string|max:50',
             'ip' => 'nullable|string|max:50',
             'mac' => 'nullable|string|max:50',
             'login_user' => 'nullable|string|max:150',
@@ -103,6 +104,7 @@ class PcReportController extends Controller
         $validated = $request->validate([
             'uid' => 'required|string|max:100',
             'hostname' => 'nullable|string|max:100',
+            'ultraviewer_id' => 'nullable|string|max:50',
         ]);
 
         $pc = Pc::where('uid', $validated['uid'])->first();
@@ -111,7 +113,12 @@ class PcReportController extends Controller
             return response()->json(['sync' => true]);
         }
 
-        $pc->updateQuietly(['last_poll_at' => now()]);
+        $updates = ['last_poll_at' => now()];
+        if (!empty($validated['ultraviewer_id']) && $pc->ultraviewer_id !== $validated['ultraviewer_id']) {
+            $updates['ultraviewer_id'] = $validated['ultraviewer_id'];
+        }
+
+        $pc->updateQuietly($updates);
 
         return response()->json(['sync' => $pc->sync_requested_at !== null]);
     }

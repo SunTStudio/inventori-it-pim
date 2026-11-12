@@ -489,7 +489,11 @@
                 <div class="hero-subtitle">
                     <span>Hostname: <code style="font-weight: 600; color: #2563eb;">{{ $pc->hostname }}</code></span>
                     <span>•</span>
-                    <span>IP: <code class="copy-pill" onclick="copyText('{{ $pc->ip }}')" title="Klik untuk salin">{{ $pc->ip ?? '-' }} 📋</code></span>
+                    <span>IP: <code class="copy-pill" onclick="copyText('{{ $pc->ip }}', 'IP')" title="Klik untuk salin">{{ $pc->ip ?? '-' }} 📋</code></span>
+                    @if ($pc->ultraviewer_id)
+                        <span>•</span>
+                        <span>UltraViewer: <code class="copy-pill" onclick="copyText('{{ $pc->ultraviewer_id }}', 'UltraViewer ID')" style="color: #0284c7; font-weight: 700;" title="Klik untuk salin ID">{{ $pc->ultraviewer_formatted_id }} 📋</code></span>
+                    @endif
                     <span>•</span>
                     <span>User Login: <strong>{{ $pc->login_user ?: 'Tidak ada' }}</strong></span>
                 </div>
@@ -498,7 +502,7 @@
 
         <div class="hero-actions" style="display: flex; gap: 8px; flex-wrap: wrap;">
             {{-- Remote PC Button --}}
-            <button type="button" class="btn btn-outline" style="color: #6d28d9; border-color: #ddd6fe; background: #faf5ff; font-weight: 700;" onclick="openRemoteModal('{{ addslashes($pc->display_name) }}', '{{ $pc->ip }}', '{{ route('pcs.remote-rdp', $pc) }}', '{{ route('pcs.remote-radmin', $pc) }}')">
+            <button type="button" class="btn btn-outline" style="color: #0284c7; border-color: #bae6fd; background: #f0f9ff; font-weight: 700;" onclick="openRemoteModal('{{ addslashes($pc->display_name) }}', '{{ $pc->ip }}', '{{ route('pcs.remote-rdp', $pc) }}', '{{ route('pcs.remote-radmin', $pc) }}', '{{ $pc->ultraviewer_id }}', '{{ $pc->ultraviewer_password }}', '{{ route('pcs.remote-ultraviewer', $pc) }}', '{{ route('pcs.ultraviewer-pass', $pc) }}', '{{ route('pcs.remote-rdp-shadow', $pc) }}')">
                 ⚡ Remote Desktop
             </button>
 
@@ -920,6 +924,19 @@
                         <input type="text" id="location" name="location" value="{{ old('location', $pc->location) }}" placeholder="Contoh: Lantai 2, Meja 05">
                     </div>
 
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div class="form-group">
+                            <label for="ultraviewer_id">UltraViewer ID</label>
+                            <input type="text" id="ultraviewer_id" name="ultraviewer_id" value="{{ old('ultraviewer_id', $pc->ultraviewer_id) }}" placeholder="Otomatis terbaca dari PC">
+                            <small class="muted">Diambil otomatis oleh agent atau diisi manual.</small>
+                        </div>
+                        <div class="form-group">
+                            <label for="ultraviewer_pass">Password Remote</label>
+                            <input type="text" id="ultraviewer_pass" name="ultraviewer_pass" value="{{ old('ultraviewer_pass', $pc->ultraviewer_pass) }}" placeholder="Default: pckantor">
+                            <small class="muted">Password permanen/custom di UltraViewer.</small>
+                        </div>
+                    </div>
+
                     <div class="form-group">
                         <label for="notes">Catatan Inventaris</label>
                         <textarea id="notes" name="notes" rows="4" placeholder="Catatan servis, upgrade RAM, riwayat garansi...">{{ old('notes', $pc->notes) }}</textarea>
@@ -1004,57 +1021,143 @@ function confirmSyncSingle(e, form, name) {
     return false;
 }
 
-function openRemoteModal(name, ip, rdpUrl, radminUrl) {
-    if (!ip || ip === '-') {
-        Swal.fire({
-            icon: 'warning',
-            title: 'IP Address Tidak Terdeteksi',
-            text: 'PC ini belum memiliki IP address yang valid untuk di-remote.',
-            confirmButtonColor: '#2563eb'
-        });
-        return;
-    }
+function formatUvId(id) {
+    if (!id) return '-';
+    return String(id).replace(/\s+/g, '').replace(/(\d{3})(?=\d)/g, '$1 ');
+}
 
+function launchUltraviewer(baseUrl) {
+    const passInput = document.getElementById('swalUvPass');
+    const pass = passInput ? encodeURIComponent(passInput.value.trim()) : 'pckantor';
+    const separator = baseUrl.includes('?') ? '&' : '?';
+    window.location.href = baseUrl + separator + 'pass=' + pass;
+}
+
+function saveUvPassword(url) {
+    const passInput = document.getElementById('swalUvPass');
+    const pass = passInput ? passInput.value.trim() : 'pckantor';
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-TOKEN': '{{ csrf_token() }}'
+        },
+        body: JSON.stringify({ ultraviewer_pass: pass })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data && data.ok) {
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: 'Password berhasil disimpan!',
+                showConfirmButton: false,
+                timer: 2000
+            });
+        }
+    })
+    .catch(() => {
+        Swal.fire({
+            toast: true,
+            position: 'top-end',
+            icon: 'error',
+            title: 'Gagal menyimpan password',
+            showConfirmButton: false,
+            timer: 2000
+        });
+    });
+}
+
+function copyRadminIp(ip) {
+    copyText(ip, 'IP Target');
+}
+
+function openRemoteModal(name, ip, rdpUrl, radminUrl, uvId, uvPass, uvDownloadUrl, uvPassUpdateUrl, rdpShadowUrl) {
     Swal.fire({
         title: '⚡ Remote Desktop: ' + name,
         html: `
             <div style="text-align: left; font-size: 13px; line-height: 1.5; color: #334155;">
-                <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 14px; border-radius: 8px; margin-bottom: 14px;">
-                    <div>Target IP: <strong style="font-family: monospace; font-size: 14px; color: #0f172a;">${ip}</strong></div>
-                    <div style="font-size: 11px; color: #64748b; margin-top: 2px;">Pastikan Anda terhubung ke jaringan LAN kantor atau Radmin VPN yang sama.</div>
-                </div>
-
-                <div style="display: flex; flex-direction: column; gap: 9px;">
-                    <!-- Opsi 1: Radmin 1-Klik Launcher -->
-                    <a href="${radminUrl}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #059669; color: #fff; padding: 11px 14px; border-radius: 8px; text-align: center; font-weight: 700; box-shadow: 0 2px 4px rgba(5,150,105,0.2);">
-                        🚀 1-Klik Radmin Viewer (Download .bat)
-                    </a>
-                    <div style="font-size: 11px; color: #64748b; margin-top: -5px; margin-bottom: 3px; text-align: center;">
-                        Klik file .bat yang terunduh, Radmin langsung terbuka & terhubung otomatis.
+                <!-- Bagian 1: ULTRAVIEWER (HERO / UTAMA KANTOR) -->
+                <div style="background: #f0f9ff; border: 1.5px solid #bae6fd; padding: 14px 16px; border-radius: 10px; margin-bottom: 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                        <div style="font-weight: 800; font-size: 14px; color: #0369a1; display: flex; align-items: center; gap: 6px;">
+                            <span>⚡</span>
+                            <span>UltraViewer (Layar Bersama & Gratis)</span>
+                        </div>
+                        <span style="font-size: 11px; background: #e0f2fe; color: #0284c7; padding: 2px 8px; border-radius: 99px; font-weight: 700;">Rekomendasi Kantor</span>
                     </div>
 
-                    <!-- Opsi 2: Windows RDP Bawaan -->
-                    <a href="${rdpUrl}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #2563eb; color: #fff; padding: 11px 14px; border-radius: 8px; text-align: center; font-weight: 700; box-shadow: 0 2px 4px rgba(37,99,235,0.2);">
-                        🖥️ Windows Remote Desktop (.rdp)
-                    </a>
-                    <div style="font-size: 11px; color: #64748b; margin-top: -5px; margin-bottom: 3px; text-align: center;">
-                        Remote standar bawaan Windows (tanpa aplikasi Radmin).
+                    <!-- UltraViewer ID Box -->
+                    <div style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <div style="font-size: 11px; color: #64748b; font-weight: 600;">PARTNER ID TARGET:</div>
+                            <div style="font-family: monospace; font-size: 18px; font-weight: 800; color: #0f172a; letter-spacing: 1px;">
+                                ${uvId ? formatUvId(uvId) : '<span style="color: #ef4444; font-size: 13px; font-weight: 600;">Belum Terdeteksi</span>'}
+                            </div>
+                        </div>
+                        ${uvId ? `<button type="button" onclick="copyText('${uvId}', 'UltraViewer ID')" style="background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer;">📋 Salin ID</button>` : ''}
                     </div>
 
-                    <!-- Opsi 3: Buka Protokol radmin:// langsung -->
-                    <a href="radmin://${ip}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #0d9488; color: #fff; padding: 10px 14px; border-radius: 8px; text-align: center; font-weight: 600; font-size: 12px;">
-                        ⚡ Buka Browser Protocol (radmin://${ip})
-                    </a>
+                    <!-- UltraViewer Password Input -->
+                    <div style="margin-bottom: 12px;">
+                        <label style="display: block; font-size: 11px; font-weight: 700; color: #475569; margin-bottom: 4px;">PASSWORD REMOTE (Default: pckantor):</label>
+                        <div style="display: flex; gap: 6px;">
+                            <input type="text" id="swalUvPass" value="${uvPass || 'pckantor'}" style="flex: 1; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-family: monospace; font-size: 13px; font-weight: 700; color: #0f172a;" placeholder="Ketik password custom client...">
+                            <button type="button" onclick="saveUvPassword('${uvPassUpdateUrl}')" style="background: #0284c7; color: #fff; border: none; padding: 8px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer;" title="Simpan password ini untuk PC ini">💾 Simpan</button>
+                            <button type="button" onclick="copyText(document.getElementById('swalUvPass').value, 'Password UltraViewer')" style="background: #f1f5f9; border: 1px solid #cbd5e1; color: #334155; padding: 8px 10px; border-radius: 6px; font-weight: 700; font-size: 12px; cursor: pointer;" title="Salin Password">📋</button>
+                        </div>
+                        <div style="font-size: 11px; color: #64748b; margin-top: 3px;">
+                            💡 <em>Ubah password jika user memberi tahu password acak hari ini, atau gunakan password default kantor.</em>
+                        </div>
+                    </div>
 
-                    <!-- Opsi 4: Salin IP -->
-                    <button type="button" class="swal2-cancel swal2-styled" style="display: block; margin: 0; background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; padding: 9px 14px; border-radius: 8px; font-weight: 600; font-size: 12px;" onclick="copyRadminIp('${ip}')">
-                        📋 Salin IP (${ip}) ke Clipboard
-                    </button>
+                    <!-- 1-Click Launch UltraViewer Button -->
+                    ${uvId ? `
+                        <button type="button" onclick="launchUltraviewer('${uvDownloadUrl}')" class="swal2-confirm swal2-styled" style="display: block; width: 100%; margin: 0; text-decoration: none; background: #0284c7; color: #fff; padding: 12px 14px; border-radius: 8px; text-align: center; font-weight: 800; font-size: 14px; box-shadow: 0 4px 6px -1px rgba(2,132,199,0.3); border: none; cursor: pointer;">
+                            🚀 1-Klik Buka UltraViewer (Otomatis Sambung)
+                        </button>
+                        <div style="font-size: 11px; color: #64748b; margin-top: 4px; text-align: center;">
+                            Klik tombol di atas untuk mengunduh shortcut launcher yang otomatis membuka UltraViewer & menghubungkan ke target.
+                        </div>
+                    ` : `
+                        <div style="background: #fffbeb; border: 1px solid #fef08a; padding: 8px 10px; border-radius: 6px; font-size: 11px; color: #92400e;">
+                            ⚠️ ID UltraViewer belum terbaca otomatis. Pastikan aplikasi UltraViewer sudah terpasang di komputer <strong>${name}</strong>. Anda juga bisa mengisi ID secara manual lewat form Edit Data.
+                        </div>
+                    `}
                 </div>
 
-                <div style="margin-top: 14px; padding: 10px 12px; background: #fefce8; border: 1px solid #fef08a; border-radius: 8px; font-size: 11px; color: #854d0e; line-height: 1.4;">
-                    💡 <strong>Tips Langsung Buka:</strong> Jika tombol hijau <em>radmin://</em> tidak merespons, itu karena Windows belum mendaftarkan protokol Radmin di browser. Anda cukup jalankan file <code>pasang-protokol-radmin.bat</code> (klik kanan <em>Run as administrator</em>) sekali saja di PC admin ini.
-                </div>
+                <!-- Bagian 2: OPSI REMOTE LAINNYA (RDP SHADOW / RDP / RADMIN) -->
+                <details style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 8px 12px; font-size: 12px;">
+                    <summary style="font-weight: 700; color: #475569; cursor: pointer; user-select: none;">
+                        ⚙️ Opsi Remote Alternatif (RDP Shadow / RDP Standar / Radmin)
+                    </summary>
+                    <div style="margin-top: 10px; display: flex; flex-direction: column; gap: 8px;">
+                        <div style="font-size: 11px; color: #64748b;">Target IP Jaringan: <code style="font-family: monospace; font-weight: 700; color: #0f172a;">${ip || '-'}</code></div>
+
+                        <!-- Opsi RDP Shadow -->
+                        <a href="${rdpShadowUrl}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #4f46e5; color: #fff; padding: 10px 12px; border-radius: 6px; text-align: center; font-weight: 700; font-size: 12px; box-shadow: 0 2px 4px rgba(79,70,229,0.2);">
+                            🖥️ 1-Klik RDP Shadow (.bat - Layar Bersama Tanpa Kunci)
+                        </a>
+                        <div style="font-size: 10px; color: #64748b; margin-top: -5px; text-align: center;">
+                            Bawaan resmi Windows: Monitor fisik karyawan tetap menyala & tidak terkunci.
+                        </div>
+                        
+                        <!-- Opsi RDP Standar -->
+                        <a href="${rdpUrl}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #2563eb; color: #fff; padding: 9px 12px; border-radius: 6px; text-align: center; font-weight: 700; font-size: 12px;">
+                            🖥️ Download Windows Remote Desktop Standar (.rdp)
+                        </a>
+
+                        <!-- Opsi Radmin -->
+                        <a href="${radminUrl}" class="swal2-confirm swal2-styled" style="display: block; margin: 0; text-decoration: none; background: #059669; color: #fff; padding: 9px 12px; border-radius: 6px; text-align: center; font-weight: 700; font-size: 12px;">
+                            🚀 Download Radmin Viewer (.bat)
+                        </a>
+
+                        <button type="button" class="swal2-cancel swal2-styled" style="display: block; margin: 0; background: #ffffff; color: #334155; border: 1px solid #cbd5e1; padding: 8px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; cursor: pointer;" onclick="copyText('${ip}', 'IP Target')">
+                            📋 Salin IP Target (${ip})
+                        </button>
+                    </div>
+                </details>
             </div>
         `,
         showConfirmButton: false,

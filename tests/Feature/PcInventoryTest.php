@@ -374,4 +374,100 @@ class PcInventoryTest extends TestCase
         $this->assertSame('downgraded', $log->change_type);
         $this->assertStringContainsString('berkurang dari 16 GB menjadi 8 GB', $log->description);
     }
+
+    /**
+     * Test report and poll store UltraViewer ID.
+     */
+    public function test_report_and_poll_stores_ultraviewer_id(): void
+    {
+        $this->withHeader('X-API-Key', $this->apiKey)
+            ->postJson('/api/report', [
+                'uid' => 'uv-test-pc',
+                'hostname' => 'UV-PC',
+                'ultraviewer_id' => '136296182',
+            ]);
+
+        $pc = Pc::where('uid', 'uv-test-pc')->first();
+        $this->assertNotNull($pc);
+        $this->assertSame('136296182', $pc->ultraviewer_id);
+        $this->assertSame('pckantor', $pc->ultraviewer_password);
+
+        // Update via poll
+        $this->withHeader('X-API-Key', $this->apiKey)
+            ->postJson('/api/poll', [
+                'uid' => 'uv-test-pc',
+                'hostname' => 'UV-PC',
+                'ultraviewer_id' => '998877665',
+            ]);
+
+        $pc->refresh();
+        $this->assertSame('998877665', $pc->ultraviewer_id);
+    }
+
+    /**
+     * Test downloading 1-click UltraViewer launcher .bat file.
+     */
+    public function test_download_ultraviewer_launcher(): void
+    {
+        $pc = Pc::create([
+            'uid' => 'uv-launcher-uid',
+            'hostname' => 'OFFICE-DESK',
+            'alias' => 'PC Budi',
+            'ultraviewer_id' => '136296182',
+            'ultraviewer_pass' => 'rahasia123',
+        ]);
+
+        $response = $this->actingAs($this->adminUser)->get("/pcs/{$pc->id}/remote-ultraviewer");
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Disposition', 'attachment; filename=UltraViewer-PC_Budi.bat');
+        $content = $response->streamedContent();
+        $this->assertStringContainsString('UltraViewer_Desktop.exe', $content);
+        $this->assertStringContainsString('-i:136296182 -p:rahasia123', $content);
+    }
+
+    /**
+     * Test updating UltraViewer password via modal AJAX.
+     */
+    public function test_update_ultraviewer_password_via_ajax(): void
+    {
+        $pc = Pc::create([
+            'uid' => 'uv-pass-uid',
+            'hostname' => 'HR-PC',
+            'ultraviewer_id' => '12345678',
+        ]);
+
+        $response = $this->actingAs($this->adminUser)->postJson("/pcs/{$pc->id}/ultraviewer-pass", [
+            'ultraviewer_pass' => 'kantorbarupass',
+        ]);
+
+        $response->assertStatus(200);
+        $response->assertJson([
+            'ok' => true,
+            'password' => 'kantorbarupass',
+        ]);
+
+        $pc->refresh();
+        $this->assertSame('kantorbarupass', $pc->ultraviewer_pass);
+    }
+
+    /**
+     * Test downloading 1-click RDP Shadow launcher .bat file.
+     */
+    public function test_download_rdp_shadow_launcher(): void
+    {
+        $pc = Pc::create([
+            'uid' => 'shadow-uid-1',
+            'hostname' => 'KASIR-01',
+            'alias' => 'PC Kasir',
+            'ip' => '192.168.1.99',
+        ]);
+
+        $response = $this->actingAs($this->adminUser)->get("/pcs/{$pc->id}/remote-rdp-shadow");
+
+        $response->assertStatus(200);
+        $response->assertHeader('Content-Disposition', 'attachment; filename=RDP-Shadow-PC_Kasir.bat');
+        $content = $response->streamedContent();
+        $this->assertStringContainsString('mstsc /v:192.168.1.99 /shadow:1 /control', $content);
+    }
 }

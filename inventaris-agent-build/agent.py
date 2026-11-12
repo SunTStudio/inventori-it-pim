@@ -456,6 +456,28 @@ def battery_info():
         return {"is_laptop": False, "status": "Desktop (Tanpa Baterai)"}
 
 
+def get_ultraviewer_id():
+    """Deteksi Partner ID UltraViewer dari Registry Windows jika terpasang."""
+    paths = [
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\UltraViewer"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\UltraViewer"),
+        (winreg.HKEY_CURRENT_USER, r"Software\UltraViewer"),
+    ]
+    for root, subkey in paths:
+        try:
+            with winreg.OpenKey(root, subkey, 0, winreg.KEY_READ) as k:
+                for name in ("PreferID", "ID"):
+                    try:
+                        val, _ = winreg.QueryValueEx(k, name)
+                        if val:
+                            return str(val).strip()
+                    except FileNotFoundError:
+                        pass
+        except OSError:
+            pass
+    return None
+
+
 def collect(uid=None):
     info = system_info()
     ram = ram_info()
@@ -467,6 +489,7 @@ def collect(uid=None):
         "stock_status": CFG.get("stock_status") or "digunakan",
         "department": CFG.get("department") or None,
         "location": CFG.get("location") or None,
+        "ultraviewer_id": get_ultraviewer_id(),
         "manufacturer": info.get("manufacturer"),
         "model": info.get("model"),
         "motherboard": info.get("motherboard"),
@@ -515,7 +538,11 @@ def poll(uid):
     """Tanya Laravel: apakah ada permintaan sinkron? Sekaligus cek-in (status online)."""
     r = requests.post(
         POLL_URL,
-        json={"uid": uid, "hostname": socket.gethostname()},
+        json={
+            "uid": uid,
+            "hostname": socket.gethostname(),
+            "ultraviewer_id": get_ultraviewer_id(),
+        },
         headers=HEADERS,
         timeout=10,
     )

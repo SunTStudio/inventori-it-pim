@@ -60,8 +60,16 @@ if defined PC_LOC (
     >> "%APP%\config.ini" echo location=%PC_LOC%
 )
 
+rem Batasi hak akses folder agar user biasa tidak bisa membaca API key di config.ini
+icacls "%APP%" /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" >nul 2>&1
+
 rem Kecualikan folder agent dari Windows Defender (hasil PyInstaller sering salah dideteksi)
 powershell -NoProfile -Command "Add-MpPreference -ExclusionPath '%APP%'" >nul 2>&1
+
+rem Mengaktifkan izin RDP Shadow (remote layar bersama bawaan Windows tanpa mengunci layar)
+reg add "HKLM\SYSTEM\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f >nul 2>&1
+reg add "HKLM\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services" /v Shadow /t REG_DWORD /d 2 /f >nul 2>&1
+netsh advfirewall firewall set rule group="remote desktop" new enable=Yes >nul 2>&1
 
 echo [3/4] Mendaftarkan agar jalan otomatis saat PC menyala...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
